@@ -82,9 +82,47 @@ async function permitirRascunhoSemConteudo(banco) {
     }
 }
 
+async function garantirConvite(banco) {
+    const tabela = await banco.query(`
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'convite';
+    `);
+
+    if (tabela.rows.length === 0) {
+        try {
+            await banco.query(`
+                CREATE TABLE convite (
+                    id_convite SERIAL PRIMARY KEY,
+                    codigo VARCHAR(9) NOT NULL UNIQUE,
+                    email VARCHAR(255),
+                    perfil VARCHAR(20) NOT NULL CHECK (perfil IN ('professor', 'responsavel')),
+                    disciplina_id INTEGER REFERENCES disciplina(id_disciplina),
+                    usado BOOLEAN NOT NULL DEFAULT FALSE,
+                    data_expiracao TIMESTAMP WITH TIME ZONE NOT NULL,
+                    criado_por INTEGER NOT NULL REFERENCES usuario(id_usuario),
+                    data_criacao TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                );
+            `);
+            await banco.query(`
+                CREATE INDEX idx_convite_codigo ON convite(codigo);
+                CREATE INDEX idx_convite_usado ON convite(usado);
+                CREATE INDEX idx_convite_expiracao ON convite(data_expiracao);
+            `);
+        } catch (erro) {
+            console.warn(
+                "Aviso: não foi possível criar tabela convite:",
+                erro.message
+            );
+        }
+    }
+}
+
 async function aplicarMigracoes(banco) {
     await garantirTelefoneUsuario(banco);
     await permitirRascunhoSemConteudo(banco);
+    await garantirConvite(banco);
 }
 
 module.exports = { aplicarMigracoes };

@@ -140,9 +140,10 @@ function mapearBimestre(linha) {
 }
 
 class AdminService {
-    constructor(adminRepository, acompanhamentoService = null) {
+    constructor(adminRepository, acompanhamentoService = null, conviteRepository = null) {
         this.adminRepository = adminRepository;
         this.acompanhamentoService = acompanhamentoService;
+        this.conviteRepository = conviteRepository;
     }
 
     // =====================================================
@@ -488,7 +489,7 @@ class AdminService {
         return mapearProfessor(professor);
     }
 
-    async criarProfessor(dados) {
+    async criarProfessor(dados, convite = null) {
         await this.verificarEmailDisponivel(dados.email);
 
         const matricula = String(dados.matricula || "").trim();
@@ -511,6 +512,20 @@ class AdminService {
             senhaHash
         });
 
+        // Vínculo professor-escola é feito aqui, a partir do convite válido.
+        let idProfessor = null;
+        if (convite) {
+            const vinculo = await this.adminRepository.criarVinculo({
+                idTurma: convite.idTurma || null,
+                idDisciplina: convite.idDisciplina || null,
+                idProfessor: criado.idProfessor,
+                idAnoLetivo: convite.idAnoLetivo || null,
+                ativo: true
+            });
+        }
+
+        // O AdminRepository.criarProfessor não retorna idProfessor via retornar;
+        // aqui já temos o idProfessor do resultado da transação.
         return await this.obterProfessor(criado.idProfessor);
     }
 
@@ -1014,6 +1029,103 @@ class AdminService {
             dataHora: linha.data_hora,
             observacao: linha.observacao
         }));
+    }
+
+    // =====================================================
+    // CONVITES (código de acesso a contas de professor/responsável)
+    // =====================================================
+
+    async criarConvite(dados, criadoPor) {
+        const codigo = this.gerarCodigoConvite();
+        const dias = Number(dados.diasValidade) || 7;
+        const dataExpiracao = new Date();
+        dataExpiracao.setDate(dataExpiracao.getDate() + dias);
+
+        const convite = await this.conviteRepository.criar({
+            codigo,
+            email: dados.email || null,
+            perfil: dados.perfil,
+            disciplinaId: dados.disciplinaId || null,
+            dataExpiracao: dataExpiracao.toISOString(),
+            criadoPor,
+        });
+
+        return {
+            id: convite.idConvite,
+            codigo: convite.codigo,
+            email: convite.email,
+            perfil: convite.perfil,
+            disciplinaId: convite.disciplinaId,
+            usado: convite.usado,
+            dataExpiracao: convite.dataExpiracao,
+            criadoPor: convite.criadoPor,
+            dataCriacao: convite.dataCriacao,
+        };
+    }
+
+    async listarConvites(filtros = {}) {
+        const { pagina = 1, porPagina = 20, perfil, usado, q } = filtros;
+
+        const [linhas, total] = await Promise.all([
+            this.conviteRepository.listar({ perfil, usado, q, pagina, porPagina }),
+            this.conviteRepository.contar({ perfil, usado, q }),
+        ]);
+
+        return {
+            dados: linhas.map((linha) => ({
+                id: linha.idConvite,
+                codigo: linha.codigo,
+                email: linha.email,
+                perfil: linha.perfil,
+                disciplinaId: linha.disciplinaId,
+                usado: linha.usado,
+                dataExpiracao: linha.dataExpiracao,
+                criadoPor: linha.criadoPor,
+                dataCriacao: linha.dataCriacao,
+            })),
+            paginacao: {
+                pagina: Number(pagina),
+                porPagina: Number(porPagina),
+                total,
+                totalPaginas: Math.ceil(total / Number(porPagina)) || 1,
+            },
+        };
+    }
+
+    async marcarConviteComoUsado(idConvite) {
+        const convite = await this.conviteRepository.marcarComoUsado(idConvite);
+
+        if (!convite) {
+            throw new ErroAplicacao(
+                "convite_nao_encontrado",
+                "Convite não encontrado.",
+                404,
+                { id: "Não existe um convite com este id." }
+            );
+        }
+
+        return {
+            id: convite.idConvite,
+            codigo: convite.codigo,
+            email: convite.email,
+            perfil: convite.perfil,
+            disciplinaId: convite.disciplinaId,
+            usado: convite.usado,
+            dataExpiracao: convite.dataExpiracao,
+            criadoPor: convite.criadoPor,
+            dataCriacao: convite.dataCriacao,
+        };
+    }
+
+    gerarCodigoConvite() {
+        const letras = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let codigo = "";
+
+        for (let indice = 0; indice < 8; indice++) {
+            codigo += letras[Math.floor(Math.random() * letras.length)];
+        }
+
+        return `${codigo.slice(0, 4)}-${codigo.slice(4)}`;
     }
 }
 

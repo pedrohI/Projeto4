@@ -17,6 +17,7 @@ class AutenticacaoService {
         this.tokenService = tokenService;
         this.professorRepository = opcoes.professorRepository || null;
         this.responsavelRepository = opcoes.responsavelRepository || null;
+        this.conviteRepository = opcoes.conviteRepository || null;
     }
 
     async montarUsuarioPublico(usuario) {
@@ -204,10 +205,12 @@ class AutenticacaoService {
         return { token, usuario: publico };
     }
 
-    async registrar({ nome, email, senha, perfil }) {
+    async registrar({ nome, email, senha, perfil, codigoConvite }) {
         const perfilNormalizado = perfilParaApi(
             perfil || "responsavel"
         );
+
+        const convite = await this.validarConvite(codigoConvite, perfilNormalizado);
 
         if (!PERFIS_PUBLICOS.includes(perfilNormalizado)) {
             throw new ErroAplicacao(

@@ -137,6 +137,19 @@ class ProfessorRepository {
         return resultado.rows;
     }
 
+    async criarPorUsuario(idUsuario, matricula = null) {
+        const sql = `
+            INSERT INTO professor (idadius, matricula)
+            VALUES ($1, $2)
+            RETURNING id_professor;
+        `;
+
+        const resultado = await this.banco.query(sql, [idUsuario, matricula || null]);
+
+        return {
+            idProfessor: resultado.rows[0].id_professor,
+        };
+    }
 }
 
 module.exports = ProfessorRepository;
