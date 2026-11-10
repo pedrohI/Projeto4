@@ -390,10 +390,111 @@ before(async () => {
         criar: (dados) => banco.criarUsuario(dados),
         atualizarPerfil: (id, dados) => banco.atualizarPerfil(id, dados)
     };
+    // Professores criados pelo fluxo de convite ficam aqui para que
+    // montarUsuarioPublico devolva professorId logo após o cadastro.
+    const professoresPorUsuario = new Map();
     const professorRepository = {
-        buscarPorUsuario: (idUsuario) => banco.buscarPorUsuario(idUsuario),
+        buscarPorUsuario: async (idUsuario) =>
+            professoresPorUsuario.get(Number(idUsuario)) ||
+            banco.buscarPorUsuario(idUsuario),
+        criarPorUsuario: async (idUsuario, matricula) => {
+            const registro = {
+                idProfessor: 100 + Number(idUsuario),
+                idUsuario: Number(idUsuario),
+                matricula: matricula || `KFKA-${idUsuario}`
+            };
+
+            professoresPorUsuario.set(Number(idUsuario), registro);
+            return { idProfessor: registro.idProfessor };
+        },
         listarVinculos: (idProfessor) => banco.listarVinculos(idProfessor),
         listar: () => banco.listarProfessores()
+    };
+    const convites = [];
+    let proximoConvite = 1;
+    const conviteRepository = {
+        buscarPorCodigo: async (codigo) =>
+            convites.find((item) => item.codigo === String(codigo).toUpperCase()) ||
+            null,
+        buscarValido: async (codigo, perfil) => {
+            const convite = await conviteRepository.buscarPorCodigo(codigo);
+
+            if (!convite) {
+                return {
+                    valido: false,
+                    motivo: "convite_inexistente",
+                    convite: null
+                };
+            }
+
+            if (convite.usado) {
+                return { valido: false, motivo: "convite_ja_usado", convite };
+            }
+
+            if (new Date() > convite.dataExpiracao) {
+                return { valido: false, motivo: "convite_expirado", convite };
+            }
+
+            if (convite.perfil !== perfil) {
+                return { valido: false, motivo: "perfil_divergente", convite };
+            }
+
+            return { valido: true, motivo: null, convite };
+        },
+        criar: async (dados) => {
+            const convite = {
+                idConvite: proximoConvite++,
+                codigo: String(dados.codigo).toUpperCase(),
+                email: dados.email || null,
+                perfil: dados.perfil,
+                disciplinaId: dados.disciplinaId || null,
+                matricula: dados.matricula || null,
+                usado: false,
+                dataExpiracao: new Date(dados.dataExpiracao),
+                criadoPor: dados.criadoPor,
+                dataCriacao: new Date()
+            };
+
+            convites.push(convite);
+            return convite;
+        },
+        reservar: async (idConvite) => {
+            const convite = convites.find(
+                (item) => item.idConvite === Number(idConvite)
+            );
+
+            if (!convite || convite.usado) return null;
+
+            convite.usado = true;
+            return convite;
+        },
+        liberar: async (idConvite) => {
+            const convite = convites.find(
+                (item) => item.idConvite === Number(idConvite)
+            );
+
+            if (!convite) return false;
+
+            convite.usado = false;
+            return true;
+        },
+        excluir: async (idConvite) => {
+            const indice = convites.findIndex(
+                (item) => item.idConvite === Number(idConvite)
+            );
+
+            if (indice < 0) return false;
+
+            convites.splice(indice, 1);
+            return true;
+        },
+        listar: async ({ perfil, usado } = {}) =>
+            convites.filter(
+                (item) =>
+                    (perfil === undefined || item.perfil === perfil) &&
+                    (usado === undefined || item.usado === usado)
+            ),
+        contar: async (filtros) => (await conviteRepository.listar(filtros)).length
     };
     const responsaveisCriados = new Map();
     const responsavelRepository = {
@@ -446,7 +547,8 @@ before(async () => {
         tokenService,
         {
             professorRepository,
-            responsavelRepository
+            responsavelRepository,
+            conviteRepository
         }
     );
     const alunoService = new AlunoService(alunoRepository);
@@ -543,7 +645,8 @@ before(async () => {
 
     const adminService = new AdminService(
         adminRepository,
-        acompanhamentoService
+        acompanhamentoService,
+        conviteRepository
     );
 
     const app = criarApp({
@@ -913,4 +1016,170 @@ test("administrador cria professor que consegue autenticar", async () => {
     assert.equal(autenticado.status, 200);
     assert.equal(autenticado.corpo.dados.usuario.perfil, "professor");
     assert.equal(autenticado.corpo.dados.usuario.senhaHash, undefined);
+});
+
+test("administrador gera convite e professor cria a própria conta", async () => {
+    const token = await login("admin@kfka.com", "Admin@123", "administrador");
+
+    const conviteCriado = await requisitar("/api/admin/convites", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+            perfil: "professor",
+            email: "professor.convite@kfka.com",
+            matricula: "PROF900",
+            diasValidade: 7
+        })
+    });
+
+    assert.equal(conviteCriado.status, 201);
+
+    const convite = conviteCriado.corpo.dados;
+    assert.match(convite.codigo, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    assert.equal(convite.perfil, "professor");
+    assert.equal(convite.matricula, "PROF900");
+    assert.equal(convite.usado, false);
+
+    const cadastro = await requisitar("/api/auth/registro", {
+        method: "POST",
+        body: JSON.stringify({
+            nome: "Professor Convidado",
+            email: "professor.convite@kfka.com",
+            senha: "Senha@123",
+            perfil: "professor",
+            codigoConvite: convite.codigo
+        })
+    });
+
+    assert.equal(cadastro.status, 201);
+    assert.equal(cadastro.corpo.dados.usuario.perfil, "professor");
+    assert.ok(cadastro.corpo.dados.usuario.professorId);
+
+    const tokenProfessor = await login(
+        "professor.convite@kfka.com",
+        "Senha@123",
+        "professor"
+    );
+    assert.ok(tokenProfessor);
+
+    const repetido = await requisitar("/api/auth/registro", {
+        method: "POST",
+        body: JSON.stringify({
+            nome: "Outra Pessoa",
+            email: "outra.pessoa@kfka.com",
+            senha: "Senha@123",
+            perfil: "professor",
+            codigoConvite: convite.codigo
+        })
+    });
+
+    assert.equal(repetido.status, 403);
+    assert.equal(repetido.corpo.erro.codigo, "convite_invalido");
+    assert.equal(repetido.corpo.erro.detalhes.codigo, "convite_ja_usado");
+
+    const lista = await requisitar("/api/admin/convites?perfil=professor", {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+
+    assert.equal(lista.status, 200);
+    assert.ok(
+        lista.corpo.dados.dados.some(
+            (item) => item.id === convite.id && item.usado
+        )
+    );
+});
+
+test("convite de e-mail específico só vale para o endereço informado", async () => {
+    const token = await login("admin@kfka.com", "Admin@123", "administrador");
+
+    const conviteCriado = await requisitar("/api/admin/convites", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+            perfil: "professor",
+            email: "titular@kfka.com"
+        })
+    });
+
+    const codigo = conviteCriado.corpo.dados.codigo;
+
+    const recusado = await requisitar("/api/auth/registro", {
+        method: "POST",
+        body: JSON.stringify({
+            nome: "Pessoa Errada",
+            email: "invasor@kfka.com",
+            senha: "Senha@123",
+            perfil: "professor",
+            codigoConvite: codigo
+        })
+    });
+
+    assert.equal(recusado.status, 403);
+    assert.equal(recusado.corpo.erro.codigo, "convite_invalido");
+    assert.equal(recusado.corpo.erro.detalhes.codigo, "email_divergente");
+
+    // O convite continua disponível para o titular.
+    const aceito = await requisitar("/api/auth/registro", {
+        method: "POST",
+        body: JSON.stringify({
+            nome: "Pessoa Titular",
+            email: "titular@kfka.com",
+            senha: "Senha@123",
+            perfil: "professor",
+            codigoConvite: codigo
+        })
+    });
+
+    assert.equal(aceito.status, 201);
+    assert.ok(aceito.corpo.dados.usuario.professorId);
+});
+
+test("cadastro de professor sem convite é bloqueado", async () => {
+    const resposta = await requisitar("/api/auth/registro", {
+        method: "POST",
+        body: JSON.stringify({
+            nome: "Professor Sem Código",
+            email: "sem.convite@kfka.com",
+            senha: "Senha@123",
+            perfil: "professor"
+        })
+    });
+
+    assert.equal(resposta.status, 403);
+    assert.equal(resposta.corpo.erro.codigo, "perfil_nao_permitido");
+});
+
+test("administrador revoga convite e o código deixa de valer", async () => {
+    const token = await login("admin@kfka.com", "Admin@123", "administrador");
+
+    const conviteCriado = await requisitar("/api/admin/convites", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ perfil: "professor" })
+    });
+
+    const convite = conviteCriado.corpo.dados;
+
+    const revogado = await requisitar(`/api/admin/convites/${convite.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+    });
+
+    assert.equal(revogado.status, 200);
+    assert.equal(revogado.corpo.dados.revogado, true);
+
+    const cadastro = await requisitar("/api/auth/registro", {
+        method: "POST",
+        body: JSON.stringify({
+            nome: "Professor Revogado",
+            email: "revogado@kfka.com",
+            senha: "Senha@123",
+            perfil: "professor",
+            codigoConvite: convite.codigo
+        })
+    });
+
+    assert.equal(cadastro.status, 403);
+    assert.equal(cadastro.corpo.erro.codigo, "convite_invalido");
+    assert.equal(cadastro.corpo.erro.detalhes.codigo, "convite_inexistente");
 });

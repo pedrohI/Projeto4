@@ -77,6 +77,60 @@ class AutenticacaoService {
         }
     }
 
+    // Valida um código de convite gerado pela coordenação. Contas de
+    // responsável podem criar conta sozinhas; professor e administrador
+    // precisam de um convite válido.
+    async validarConvite(codigoConvite, perfil, email = null) {
+        if (!this.conviteRepository) return null;
+        if (!codigoConvite) return null;
+
+        const resultado = await this.conviteRepository.buscarValido(
+            codigoConvite,
+            perfil
+        );
+
+        if (!resultado.valido) {
+            throw new ErroAplicacao(
+                "convite_invalido",
+                "O código de convite não é válido, já foi usado ou expirou.",
+                403,
+                { codigo: resultado.motivo }
+            );
+        }
+
+        const convite = resultado.convite;
+
+        // Quando a coordenação emite o convite para um e-mail específico,
+        // ele só vale para aquele endereço.
+        if (
+            email &&
+            convite.email &&
+            String(convite.email).toLowerCase() !== String(email).toLowerCase()
+        ) {
+            throw new ErroAplicacao(
+                "convite_invalido",
+                "Este código de convite pertence a outro e-mail.",
+                403,
+                { codigo: "email_divergente" }
+            );
+        }
+
+        return convite;
+    }
+
+    async criarProfessorPorConvite(convite, idUsuario) {
+        if (!this.professorRepository) {
+            throw new Error("ProfessorRepository não configurado.");
+        }
+
+        // A matrícula vem do convite (definida pela coordenação). Quando ela
+        // não é informada, criarPorUsuario gera uma a partir do id do usuário.
+        return await this.professorRepository.criarPorUsuario(
+            idUsuario,
+            convite.matricula || null
+        );
+    }
+
     // Atualização dos próprios dados (nome, e-mail e telefone).
     async atualizarPerfil(idUsuario, dados) {
         const usuario = await this.usuarioRepository.buscarPorId(idUsuario);
@@ -210,9 +264,13 @@ class AutenticacaoService {
             perfil || "responsavel"
         );
 
-        const convite = await this.validarConvite(codigoConvite, perfilNormalizado);
+        const convite = await this.validarConvite(
+            codigoConvite,
+            perfilNormalizado,
+            email
+        );
 
-        if (!PERFIS_PUBLICOS.includes(perfilNormalizado)) {
+        if (!PERFIS_PUBLICOS.includes(perfilNormalizado) && !convite) {
             throw new ErroAplicacao(
                 "perfil_nao_permitido",
                 "O cadastro público cria apenas contas de responsável. Coordenação e professores são cadastrados pela escola.",
@@ -234,6 +292,23 @@ class AutenticacaoService {
 
         const senhaHash = await bcrypt.hash(senha, 12);
 
+        // Reserva o convite antes de criar a conta para que dois cadastros
+        // simultâneos não usem o mesmo código.
+        let reservado = null;
+
+        if (convite) {
+            reservado = await this.conviteRepository.reservar(convite.idConvite);
+
+            if (!reservado) {
+                throw new ErroAplicacao(
+                    "convite_invalido",
+                    "O código de convite não é válido, já foi usado ou expirou.",
+                    403,
+                    { codigo: "convite_ja_usado" }
+                );
+            }
+        }
+
         try {
             const usuario = await this.usuarioRepository.criar({
                 nome,
@@ -244,8 +319,27 @@ class AutenticacaoService {
 
             await this.garantirResponsavel(usuario);
 
+            if (reservado) {
+                await this.criarProfessorPorConvite(
+                    reservado,
+                    usuario.idUsuario
+                );
+            }
+
             return await this.montarUsuarioPublico(usuario);
         } catch (erro) {
+            // A conta não foi criada: devolve o convite para uso.
+            if (reservado) {
+                try {
+                    await this.conviteRepository.liberar(reservado.idConvite);
+                } catch (erroLiberacao) {
+                    console.error(
+                        "Não foi possível liberar o convite após falha no cadastro:",
+                        erroLiberacao.message
+                    );
+                }
+            }
+
             if (erro && erro.code === "23505") {
                 throw new ErroAplicacao(
                     "email_em_uso",

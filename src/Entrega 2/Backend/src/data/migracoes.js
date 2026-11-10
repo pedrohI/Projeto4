@@ -98,10 +98,11 @@ async function garantirConvite(banco) {
                     codigo VARCHAR(9) NOT NULL UNIQUE,
                     email VARCHAR(255),
                     perfil VARCHAR(20) NOT NULL CHECK (perfil IN ('professor', 'responsavel')),
-                    disciplina_id INTEGER REFERENCES disciplina(id_disciplina),
+                    disciplina_id BIGINT REFERENCES disciplina(id_disciplina),
+                    matricula VARCHAR(30),
                     usado BOOLEAN NOT NULL DEFAULT FALSE,
                     data_expiracao TIMESTAMP WITH TIME ZONE NOT NULL,
-                    criado_por INTEGER NOT NULL REFERENCES usuario(id_usuario),
+                    criado_por BIGINT NOT NULL REFERENCES usuario(id_usuario),
                     data_criacao TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
                 );
             `);
@@ -115,7 +116,29 @@ async function garantirConvite(banco) {
                 "Aviso: não foi possível criar tabela convite:",
                 erro.message
             );
+            console.warn(
+                "Rode uma vez como dono do banco: scripts/sql/convite.sql"
+            );
+            return;
         }
+    }
+
+    // Bancos criados antes da matrícula opcional no convite.
+    try {
+        await banco.query(`
+            ALTER TABLE convite
+            ADD COLUMN IF NOT EXISTS matricula VARCHAR(30);
+        `);
+    } catch (erro) {
+        // O usuário da aplicação pode não ser dono da tabela; o
+        // scripts/sql/convite.sql traz o comando para rodar como dono.
+        console.warn(
+            "Aviso: não foi possível criar convite.matricula:",
+            erro.message
+        );
+        console.warn(
+            "Rode uma vez como dono do banco: ALTER TABLE convite ADD COLUMN IF NOT EXISTS matricula VARCHAR(30);"
+        );
     }
 }
 

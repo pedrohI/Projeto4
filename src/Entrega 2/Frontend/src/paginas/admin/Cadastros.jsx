@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import Avatar from "../../componentes/Avatar.jsx";
 import Campo from "../../componentes/Campo.jsx";
@@ -15,6 +15,7 @@ import {
 } from "../../dados/carregarDados.js";
 import { api, dados } from "../../dados/dados.js";
 import { api as apiServidor } from "../../servicos/api.js";
+import { emailValido } from "../../utilitarios/formatadores.js";
 import { useTitulo } from "../../utilitarios/useTitulo.js";
 
 const dataHojeISO = () => {
@@ -718,6 +719,9 @@ export function Professores() {
         titulo="Professores"
         lead="Cadastre professores e veja em quais turmas e disciplinas cada um está vinculado."
       >
+        <Link className="btn btn-secondary" to="/admin/professores/convites">
+          <Icone nome="link" /> Convites
+        </Link>
         <Link className="btn btn-primary" to="/admin/professores/novo">
           <Icone nome="plus" /> Novo professor
         </Link>
@@ -787,6 +791,296 @@ export function Professores() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </LayoutApp>
+  );
+}
+
+/* ============================ CONVITES ============================ */
+
+function dataCurta(valor) {
+  if (!valor) return "—";
+  const data = new Date(valor);
+  return Number.isNaN(data.getTime()) ? "—" : data.toLocaleDateString("pt-BR");
+}
+
+function situacaoConvite(convite) {
+  if (convite.usado) {
+    return { rotulo: "Usado", classe: "cancelado", icone: "check" };
+  }
+  if (convite.expirado) {
+    return { rotulo: "Expirado", classe: "cancelado", icone: "ban" };
+  }
+  return { rotulo: "Disponível", classe: "publicado", icone: "check" };
+}
+
+export function Convites() {
+  useTitulo("Convites de professor");
+  const { avisar } = useAviso();
+  const [form, setForm] = useState({
+    email: "",
+    matricula: "",
+    diasValidade: "7",
+  });
+  const [erros, setErros] = useState({});
+  const [enviando, setEnviando] = useState(false);
+  const [gerado, setGerado] = useState(null);
+  const [convites, setConvites] = useState([]);
+  const [carregando, setCarregando] = useState(true);
+
+  const carregarConvites = useCallback(async () => {
+    try {
+      const resposta = await apiServidor(
+        "/admin/convites?perfil=professor&porPagina=50",
+      );
+      setConvites(resposta.dados || []);
+    } catch (erro) {
+      avisar("Não foi possível carregar os convites", erro.message, "err");
+    } finally {
+      setCarregando(false);
+    }
+  }, [avisar]);
+
+  useEffect(() => {
+    carregarConvites();
+  }, [carregarConvites]);
+
+  async function gerar(evento) {
+    evento.preventDefault();
+    if (enviando) return;
+
+    const novos = {};
+    if (form.email.trim() && !emailValido(form.email)) {
+      novos.email = "Informe um e-mail válido ou deixe em branco.";
+    }
+    setErros(novos);
+    if (Object.keys(novos).length > 0) return;
+
+    setEnviando(true);
+
+    try {
+      const corpo = {
+        perfil: "professor",
+        diasValidade: Number(form.diasValidade),
+      };
+      if (form.email.trim()) corpo.email = form.email.trim();
+      if (form.matricula.trim()) corpo.matricula = form.matricula.trim();
+
+      const convite = await apiServidor("/admin/convites", {
+        metodo: "POST",
+        corpo,
+      });
+
+      setGerado(convite.codigo);
+      setForm({ email: "", matricula: "", diasValidade: form.diasValidade });
+      await carregarConvites();
+      avisar(
+        "Convite gerado",
+        `Válido até ${dataCurta(convite.dataExpiracao)}.`,
+        "ok",
+      );
+    } catch (erro) {
+      avisar("Não foi possível gerar o convite", erro.message, "err");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  async function copiar(codigo) {
+    try {
+      await navigator.clipboard.writeText(codigo);
+      avisar("Código copiado", codigo, "ok");
+    } catch {
+      avisar("Copie o código", codigo, "info");
+    }
+  }
+
+  async function revogar(convite) {
+    if (enviando) return;
+
+    setEnviando(true);
+
+    try {
+      await apiServidor(`/admin/convites/${convite.id}`, { metodo: "DELETE" });
+      setConvites((atuais) =>
+        atuais.filter((item) => item.id !== convite.id),
+      );
+      avisar("Convite revogado", convite.codigo, "info");
+    } catch (erro) {
+      avisar("Não foi possível revogar o convite", erro.message, "err");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <LayoutApp papel="admin" ativo="professores">
+      <PageHead
+        crumbs={[
+          { label: "Estrutura escolar" },
+          { label: "Professores", to: "/admin/professores" },
+          { label: "Convites" },
+        ]}
+        title="Convites de professor"
+        lead="Gere um código para o professor criar a própria conta. Cada convite vale uma vez, para o e-mail e o prazo escolhidos."
+        actions={
+          <Link className="btn btn-secondary" to="/admin/professores">
+            <Icone nome="chevron-left" /> Voltar
+          </Link>
+        }
+      />
+
+      {gerado && (
+        <div className="alert success" role="status">
+          <Icone nome="check" />
+          <div>
+            <b>Código {gerado}</b>
+            <div className="row" style={{ marginTop: "0.5rem" }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => copiar(gerado)}
+              >
+                Copiar código
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <section className="card">
+        <h2>Criar convite</h2>
+        <form className="stack" onSubmit={gerar} noValidate>
+          <div className="form-grid">
+            <Campo
+              id="convite-email"
+              label="E-mail do professor"
+              tipo="email"
+              valor={form.email}
+              aoMudar={(valor) =>
+                setForm((atual) => ({ ...atual, email: valor }))
+              }
+              placeholder="nome@escola.edu.br"
+              dica="Opcional. Com e-mail, o código só vale para este endereço."
+              erro={erros.email}
+              inputMode="email"
+              autoComplete="off"
+            />
+            <Campo
+              id="convite-matricula"
+              label="Matrícula"
+              valor={form.matricula}
+              aoMudar={(valor) =>
+                setForm((atual) => ({ ...atual, matricula: valor }))
+              }
+              placeholder="P001"
+              dica="Opcional. Sem matrícula, o sistema gera uma automaticamente."
+              maxLength={30}
+              autoComplete="off"
+            />
+            <Campo
+              id="convite-validade"
+              label="Validade"
+              valor={form.diasValidade}
+              aoMudar={(valor) =>
+                setForm((atual) => ({ ...atual, diasValidade: valor }))
+              }
+              opcoes={[
+                ["3", "3 dias"],
+                ["7", "7 dias"],
+                ["15", "15 dias"],
+                ["30", "30 dias"],
+              ]}
+            />
+          </div>
+          <div className="row">
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={enviando}
+            >
+              <Icone nome="link" /> Gerar código
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="card">
+        <h2>Últimos convites</h2>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Para</th>
+                <th>Validade</th>
+                <th>Situação</th>
+                <th>
+                  <span className="sr-only">Ações</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {convites.map((convite) => {
+                const situacao = situacaoConvite(convite);
+                return (
+                  <tr key={convite.id}>
+                    <td className="cell-main">
+                      <b>{convite.codigo}</b>
+                    </td>
+                    <td data-label="Para">
+                      {convite.email || (
+                        <span className="muted">Qualquer e-mail</span>
+                      )}
+                      {convite.matricula && (
+                        <>
+                          <br />
+                          <small>Matrícula {convite.matricula}</small>
+                        </>
+                      )}
+                    </td>
+                    <td data-label="Validade">
+                      {dataCurta(convite.dataExpiracao)}
+                    </td>
+                    <td data-label="Situação">
+                      <span className={`status ${situacao.classe}`}>
+                        <Icone nome={situacao.icone} /> {situacao.rotulo}
+                      </span>
+                    </td>
+                    <td className="actions">
+                      {!convite.usado && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => copiar(convite.codigo)}
+                          >
+                            <Icone nome="file" className="icon-sm" /> Copiar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => revogar(convite)}
+                            disabled={enviando}
+                          >
+                            <Icone nome="ban" className="icon-sm" /> Revogar
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {!carregando && convites.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="muted">
+                    Nenhum convite gerado ainda.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

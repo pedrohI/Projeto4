@@ -15,7 +15,8 @@ function criarAuthRoutes(autenticacaoService, autenticar) {
                 perfil: {
                     tipo: "enum",
                     valores: ["administrador", "professor", "responsavel"]
-                }
+                },
+                codigoConvite: { tipo: "texto", max: 9 }
             });
 
             const usuario = await autenticacaoService.registrar(dados);

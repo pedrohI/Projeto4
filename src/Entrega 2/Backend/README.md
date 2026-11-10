@@ -42,6 +42,17 @@ cp .env.example .env   # configure PostgreSQL e JWT_SECRET
 npm start              # http://localhost:3000
 ```
 
+## Migration executada pelo dono do banco
+
+O usuário da aplicação (`kfka_app`) só tem `USAGE` no schema `public`, então não consegue criar tabelas. Rode uma vez, conectado como o dono (`KFKA_owner`):
+
+```bash
+# Neon: aba SQL Editor, ou
+psql "$DATABASE_URL_DO_DONO" -f scripts/sql/convite.sql
+```
+
+`scripts/sql/convite.sql` é idempotente e cria a tabela usada pelos convites de professor.
+
 ## Testes
 
 ```bash

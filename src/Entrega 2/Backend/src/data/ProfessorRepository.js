@@ -138,13 +138,17 @@ class ProfessorRepository {
     }
 
     async criarPorUsuario(idUsuario, matricula = null) {
+        // professor.matricula é NOT NULL; o serviço sempre envia um valor.
         const sql = `
-            INSERT INTO professor (idadius, matricula)
+            INSERT INTO professor (id_usuario, matricula)
             VALUES ($1, $2)
             RETURNING id_professor;
         `;
 
-        const resultado = await this.banco.query(sql, [idUsuario, matricula || null]);
+        const resultado = await this.banco.query(sql, [
+            idUsuario,
+            matricula || `KFKA-${idUsuario}`
+        ]);
 
         return {
             idProfessor: resultado.rows[0].id_professor,

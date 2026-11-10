@@ -22,6 +22,7 @@ const carregarRelatoriosFamilia = () => import("./paginas/familia/Relatorios.jsx
 const Auditoria = pagina(() => import("./paginas/admin/Auditoria.jsx"));
 const AlunoForm = pagina(carregarCadastros, "AlunoForm");
 const Alunos = pagina(carregarCadastros, "Alunos");
+const Convites = pagina(carregarCadastros, "Convites");
 const ProfessorForm = pagina(carregarCadastros, "ProfessorForm");
 const Professores = pagina(carregarCadastros, "Professores");
 const ResponsavelForm = pagina(carregarCadastros, "ResponsavelForm");
@@ -137,6 +138,14 @@ export default function App() {
           element={
             <RotaProtegida perfil="administrador">
               <Professores />
+            </RotaProtegida>
+          }
+        />
+        <Route
+          path="/admin/professores/convites"
+          element={
+            <RotaProtegida perfil="administrador">
+              <Convites />
             </RotaProtegida>
           }
         />

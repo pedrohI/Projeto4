@@ -1,3 +1,16 @@
+// O código é exibido como "AURO-7K2P" e pode chegar sem o hífen.
+function normalizarCodigo(codigo) {
+    const limpo = String(codigo ?? "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "");
+
+    if (limpo.length === 8) {
+        return `${limpo.slice(0, 4)}-${limpo.slice(4)}`;
+    }
+
+    return limpo;
+}
+
 class ConviteRepository {
     constructor(banco) {
         this.banco = banco;
@@ -10,6 +23,7 @@ class ConviteRepository {
             email: linha.email,
             perfil: linha.perfil,
             disciplinaId: linha.disciplina_id,
+            matricula: linha.matricula,
             usado: linha.usado,
             dataExpiracao: linha.data_expiracao,
             criadoPor: linha.criado_por,
@@ -25,6 +39,7 @@ class ConviteRepository {
                 email,
                 perfil,
                 disciplina_id,
+                matricula,
                 usado,
                 data_expiracao,
                 criado_por,
@@ -33,7 +48,9 @@ class ConviteRepository {
             WHERE codigo = $1;
         `;
 
-        const resultado = await this.banco.query(sql, [codigo.toUpperCase()]);
+        const resultado = await this.banco.query(sql, [
+            normalizarCodigo(codigo),
+        ]);
 
         if (resultado.rows.length === 0) {
             return null;
@@ -64,23 +81,33 @@ class ConviteRepository {
         return { valido: true, motivo: null, convite };
     }
 
-    async criar({ codigo, email, perfil, disciplinaId, dataExpiracao, criadoPor }) {
+    async criar({
+        codigo,
+        email,
+        perfil,
+        disciplinaId,
+        matricula,
+        dataExpiracao,
+        criadoPor,
+    }) {
         const sql = `
             INSERT INTO convite (
                 codigo,
                 email,
                 perfil,
                 disciplina_id,
+                matricula,
                 data_expiracao,
                 criado_por
             )
-            VALUES ($1, $2, $3, $4, $5, $6)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING
                 id_convite,
                 codigo,
                 email,
                 perfil,
                 disciplina_id,
+                matricula,
                 usado,
                 data_expiracao,
                 criado_por,
@@ -88,10 +115,11 @@ class ConviteRepository {
         `;
 
         const resultado = await this.banco.query(sql, [
-            codigo.toUpperCase(),
+            normalizarCodigo(codigo),
             email || null,
             perfil,
             disciplinaId || null,
+            matricula || null,
             dataExpiracao,
             criadoPor,
         ]);
@@ -99,17 +127,21 @@ class ConviteRepository {
         return this.montarConvite(resultado.rows[0]);
     }
 
-    async marcarComoUsado(idConvite) {
+    // Reserva o convite de forma atômica antes de criar a conta. Se duas
+    // requisições chegarem com o mesmo código, só uma recebe a linha de volta.
+    async reservar(idConvite) {
         const sql = `
             UPDATE convite
             SET usado = TRUE
             WHERE id_convite = $1
+              AND usado = FALSE
             RETURNING
                 id_convite,
                 codigo,
                 email,
                 perfil,
                 disciplina_id,
+                matricula,
                 usado,
                 data_expiracao,
                 criado_por,
@@ -123,6 +155,34 @@ class ConviteRepository {
         }
 
         return this.montarConvite(resultado.rows[0]);
+    }
+
+    // Desfaz a reserva quando a criação da conta falha depois dela.
+    async liberar(idConvite) {
+        const sql = `
+            UPDATE convite
+            SET usado = FALSE
+            WHERE id_convite = $1
+            RETURNING id_convite;
+        `;
+
+        const resultado = await this.banco.query(sql, [idConvite]);
+        return resultado.rows.length > 0;
+    }
+
+    async marcarComoUsado(idConvite) {
+        return await this.reservar(idConvite);
+    }
+
+    async excluir(idConvite) {
+        const sql = `
+            DELETE FROM convite
+            WHERE id_convite = $1
+            RETURNING id_convite;
+        `;
+
+        const resultado = await this.banco.query(sql, [idConvite]);
+        return resultado.rows.length > 0;
     }
 
     async listar({ perfil, usado, q, pagina = 1, porPagina = 20 } = {}) {
@@ -157,6 +217,7 @@ class ConviteRepository {
                 email,
                 perfil,
                 disciplina_id,
+                matricula,
                 usado,
                 data_expiracao,
                 criado_por,
@@ -201,3 +262,4 @@ class ConviteRepository {
 }
 
 module.exports = ConviteRepository;
+module.exports.normalizarCodigo = normalizarCodigo;

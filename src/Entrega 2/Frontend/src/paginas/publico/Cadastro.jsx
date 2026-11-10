@@ -150,6 +150,7 @@ export default function Cadastro() {
         email: email.trim(),
         sub,
         senha,
+        codigoConvite: perfil === "administrador" ? undefined : convite.trim(),
       });
       setCriada(email.trim());
     } catch (erro) {
@@ -160,6 +161,16 @@ export default function Cadastro() {
             "Já existe uma conta com este e-mail. Use “Entrar” ou outro endereço.",
         }));
         document.getElementById("email")?.focus();
+      } else if (
+        erro instanceof ErroAutenticacao &&
+        erro.codigo === "convite_invalido"
+      ) {
+        setErros((atuais) => ({
+          ...atuais,
+          convite:
+            "Código inválido, já usado ou expirado. Confira com a coordenação.",
+        }));
+        document.getElementById("convite")?.focus();
       } else if (
         erro instanceof ErroAutenticacao &&
         erro.codigo === "perfil_nao_permitido"
