@@ -102,6 +102,18 @@ const REGRAS_ANO_LETIVO = {
     ativo: { tipo: "booleano" }
 };
 
+const REGRAS_CONVITE = {
+    perfil: {
+        tipo: "enum",
+        obrigatorio: true,
+        valores: ["professor", "responsavel"]
+    },
+    email: { tipo: "email" },
+    matricula: { tipo: "texto", min: 1, max: 30 },
+    disciplinaId: { tipo: "inteiro" },
+    diasValidade: { tipo: "inteiro", min: 1, max: 90 }
+};
+
 const REGRAS_BIMESTRE = {
     idAnoLetivo: { tipo: "inteiro", obrigatorio: true },
     numero: { tipo: "inteiro", obrigatorio: true, min: 1, max: 4 },
@@ -324,6 +336,55 @@ function criarAdminRoutes(adminService, autenticar) {
                 res,
                 await adminService.definirAtivoProfessor(id, false)
             );
+        })
+    );
+
+    // =====================================================
+    // CONVITES (código para o professor criar a própria conta)
+    // =====================================================
+
+    router.post(
+        "/convites",
+        asyncHandler(async (req, res) => {
+            const dados = validarCampos(req.body, REGRAS_CONVITE);
+
+            responder(
+                res,
+                await adminService.criarConvite(
+                    dados,
+                    req.usuario.idUsuario
+                ),
+                201
+            );
+        })
+    );
+
+    router.get(
+        "/convites",
+        asyncHandler(async (req, res) => {
+            responder(
+                res,
+                await adminService.listarConvites({
+                    perfil: req.query.perfil
+                        ? String(req.query.perfil).toLowerCase()
+                        : undefined,
+                    usado: opcionalBooleano(req, "usado"),
+                    q: typeof req.query.q === "string" ? req.query.q : undefined,
+                    pagina: Math.max(1, Number(req.query.pagina) || 1),
+                    porPagina: Math.min(
+                        100,
+                        Math.max(1, Number(req.query.porPagina) || 20)
+                    )
+                })
+            );
+        })
+    );
+
+    router.delete(
+        "/convites/:id",
+        asyncHandler(async (req, res) => {
+            const id = validarId(req.params.id, "id");
+            responder(res, await adminService.revogarConvite(id));
         })
     );
 

@@ -264,18 +264,24 @@ export function AutenticacaoProvider({ children }) {
     }
   }, []);
 
-  const cadastrar = useCallback(async ({ perfil, nome, email, senha }) => {
-    try {
-      const { usuario: dadosUsuario } = await api("/auth/registro", {
-        metodo: "POST",
-        corpo: { nome, email, senha, perfil },
-      });
+  const cadastrar = useCallback(
+    async ({ perfil, nome, email, senha, codigoConvite }) => {
+      try {
+        const corpo = { nome, email, senha, perfil };
+        if (codigoConvite) corpo.codigoConvite = codigoConvite;
 
-      return enriquecerSessao(dadosUsuario);
-    } catch (erro) {
-      throw paraErroAutenticacao(erro);
-    }
-  }, []);
+        const { usuario: dadosUsuario } = await api("/auth/registro", {
+          metodo: "POST",
+          corpo,
+        });
+
+        return enriquecerSessao(dadosUsuario);
+      } catch (erro) {
+        throw paraErroAutenticacao(erro);
+      }
+    },
+    [],
+  );
 
   const sair = useCallback(() => {
     limparSessaoArmazenada();

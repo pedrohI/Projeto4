@@ -7,6 +7,7 @@ const AdminRepository = require("./src/data/AdminRepository");
 const AlunoRepository = require("./src/data/AlunoRepository");
 const AcompanhamentoRepository = require("./src/data/AcompanhamentoRepository");
 const BimestreRepository = require("./src/data/BimestreRepository");
+const ConviteRepository = require("./src/data/ConviteRepository");
 const ProfessorRepository = require("./src/data/ProfessorRepository");
 const ResponsavelRepository = require("./src/data/ResponsavelRepository");
 const UsuarioRepository = require("./src/data/UsuarioRepository");
@@ -46,7 +47,8 @@ const autenticacaoService = new AutenticacaoService(
     tokenService,
     {
         professorRepository,
-        responsavelRepository
+        responsavelRepository,
+        conviteRepository: new ConviteRepository(banco)
     }
 );
 
@@ -65,7 +67,8 @@ const professorService = new ProfessorService(professorRepository);
 
 const adminService = new AdminService(
     adminRepository,
-    acompanhamentoService
+    acompanhamentoService,
+    new ConviteRepository(banco)
 );
 
 const origens = String(

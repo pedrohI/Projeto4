@@ -1,4 +1,5 @@
 const bcrypt = require("bcryptjs");
+const { randomInt } = require("crypto");
 
 const ErroAplicacao = require("../errors/ErroAplicacao");
 const { perfilParaApi } = require("../utils/perfil");
@@ -140,9 +141,10 @@ function mapearBimestre(linha) {
 }
 
 class AdminService {
-    constructor(adminRepository, acompanhamentoService = null) {
+    constructor(adminRepository, acompanhamentoService = null, conviteRepository = null) {
         this.adminRepository = adminRepository;
         this.acompanhamentoService = acompanhamentoService;
+        this.conviteRepository = conviteRepository;
     }
 
     // =====================================================
@@ -1014,6 +1016,131 @@ class AdminService {
             dataHora: linha.data_hora,
             observacao: linha.observacao
         }));
+    }
+
+    // =====================================================
+    // CONVITES (código de acesso a contas de professor/responsável)
+    // =====================================================
+
+    mapearConvite(convite) {
+        return {
+            id: convite.idConvite,
+            codigo: convite.codigo,
+            email: convite.email,
+            perfil: convite.perfil,
+            disciplinaId: convite.disciplinaId,
+            matricula: convite.matricula,
+            usado: convite.usado,
+            expirado: new Date(convite.dataExpiracao) <= new Date(),
+            dataExpiracao: convite.dataExpiracao,
+            criadoPor: convite.criadoPor,
+            dataCriacao: convite.dataCriacao,
+        };
+    }
+
+    exigirConviteRepository() {
+        if (!this.conviteRepository) {
+            throw new ErroAplicacao(
+                "convite_indisponivel",
+                "A geração de convites não está configurada nesta instalação.",
+                503
+            );
+        }
+
+        return this.conviteRepository;
+    }
+
+    async criarConvite(dados, criadoPor) {
+        const conviteRepository = this.exigirConviteRepository();
+        const perfil = perfilParaApi(dados.perfil);
+
+        if (!["professor", "responsavel"].includes(perfil)) {
+            throw new ErroAplicacao(
+                "perfil_invalido",
+                "O convite deve ser para professor ou responsável.",
+                422,
+                { perfil: "Use professor ou responsavel." }
+            );
+        }
+
+        const dias = Number(dados.diasValidade) || 7;
+        const dataExpiracao = new Date();
+        dataExpiracao.setDate(dataExpiracao.getDate() + dias);
+
+        // O código é único no banco. Se houver colisão, tenta outro.
+        let convite = null;
+
+        for (let tentativa = 0; tentativa < 5 && !convite; tentativa++) {
+            try {
+                convite = await conviteRepository.criar({
+                    codigo: this.gerarCodigoConvite(),
+                    email: dados.email || null,
+                    perfil,
+                    disciplinaId: dados.disciplinaId || null,
+                    matricula: dados.matricula || null,
+                    dataExpiracao: dataExpiracao.toISOString(),
+                    criadoPor,
+                });
+            } catch (erro) {
+                if (!erro || erro.code !== "23505") throw erro;
+            }
+        }
+
+        if (!convite) {
+            throw new ErroAplicacao(
+                "convite_nao_gerado",
+                "Não foi possível gerar um código único. Tente novamente.",
+                503
+            );
+        }
+
+        return this.mapearConvite(convite);
+    }
+
+    async listarConvites(filtros = {}) {
+        const conviteRepository = this.exigirConviteRepository();
+        const { pagina = 1, porPagina = 20, perfil, usado, q } = filtros;
+
+        const [linhas, total] = await Promise.all([
+            conviteRepository.listar({ perfil, usado, q, pagina, porPagina }),
+            conviteRepository.contar({ perfil, usado, q }),
+        ]);
+
+        return {
+            dados: linhas.map((linha) => this.mapearConvite(linha)),
+            paginacao: {
+                pagina: Number(pagina),
+                porPagina: Number(porPagina),
+                total,
+                totalPaginas: Math.ceil(total / Number(porPagina)) || 1,
+            },
+        };
+    }
+
+    async revogarConvite(idConvite) {
+        const conviteRepository = this.exigirConviteRepository();
+        const removido = await conviteRepository.excluir(idConvite);
+
+        if (!removido) {
+            throw naoEncontrado(
+                "convite",
+                "Convite não encontrado."
+            );
+        }
+
+        return { id: Number(idConvite), revogado: true };
+    }
+
+    gerarCodigoConvite() {
+        // Sem O/0 e I/1 para o código não ser confundido ao ser lido.
+        const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        let codigo = "";
+
+        for (let indice = 0; indice < 8; indice++) {
+            codigo += alfabeto[randomInt(alfabeto.length)];
+        }
+
+        return `${codigo.slice(0, 4)}-${codigo.slice(4)}`;
     }
 }
 
